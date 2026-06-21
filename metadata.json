@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: Gerenciador de Estoque  teste3.0",
+  "description": "Sistema de gerenciamento de estoque em tempo real para equipes, com controle de produtos, movimentações e alertas de nível crítico.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

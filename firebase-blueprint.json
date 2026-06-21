@@ -1,0 +1,147 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "An inventory item in the stock registry.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Product SKU or database barcode ID containing only alphanumeric characters, dashes, and underscores."
+        },
+        "name": {
+          "type": "string",
+          "description": "Highly visible name of the inventory product."
+        },
+        "category": {
+          "type": "string",
+          "description": "Categoric bin (e.g., Alimentos, Eletrônicos, Escritório, etc.)."
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Strictly non-negative integer representing current stock."
+        },
+        "minQuantity": {
+          "type": "number",
+          "description": "Safety threshold causing triggers and push notices when actual stock falls short."
+        },
+        "price": {
+          "type": "number",
+          "description": "Unit physical value of the product."
+        },
+        "location": {
+          "type": "string",
+          "description": "The shelf-rack or warehouse department positioning."
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed notes on features, parts, or specifications."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server-side transaction record marker."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Display name of the modifier user."
+        },
+        "updatedByEmail": {
+          "type": "string",
+          "description": "Registered email details."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "category",
+        "quantity",
+        "minQuantity",
+        "price",
+        "updatedAt",
+        "updatedBy",
+        "updatedByEmail"
+      ]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Audit record tracking product flow events (IN, OUT, ADJUST).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Transaction identification string."
+        },
+        "productId": {
+          "type": "string",
+          "description": "SKU code linking back to the parent Product."
+        },
+        "productName": {
+          "type": "string",
+          "description": "Historic product title snapshot."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["IN", "OUT", "ADJUST"],
+          "description": "Stock flow direction: entry (IN), exit (OUT), or manual calibration (ADJUST)."
+        },
+        "quantityChanged": {
+          "type": "number",
+          "description": "Relative difference of quantity added or removed."
+        },
+        "previousQuantity": {
+          "type": "number",
+          "description": "Active quantity prior to the change."
+        },
+        "newQuantity": {
+          "type": "number",
+          "description": "Stock volume post adjustment."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Clarifying commentary for audit records."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Moment of transaction completion."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Authorized modifier user UID."
+        },
+        "userEmail": {
+          "type": "string",
+          "description": "Email address of record modifier."
+        },
+        "userDisplayName": {
+          "type": "string",
+          "description": "Display Name of the acting user."
+        }
+      },
+      "required": [
+        "id",
+        "productId",
+        "productName",
+        "type",
+        "quantityChanged",
+        "previousQuantity",
+        "newQuantity",
+        "timestamp",
+        "userId",
+        "userEmail",
+        "userDisplayName"
+      ]
+    }
+  },
+  "firestore": {
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "Shared real-time inventory collection of physical items."
+    },
+    "transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Incremental historical timeline of stock updates accessed by team members."
+    }
+  }
+}

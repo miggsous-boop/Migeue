@@ -1,0 +1,192 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net - default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- REUSABLE SECURITY PRIMITIVES ---
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function isValidEmailId(id) {
+      return id is string && id.size() <= 128 && (id.matches('^[a-zA-Z0-9_.@+-]+$') || id.matches('^[^@]+@[^@]+$'));
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Returns true if the user is the supreme owner or is a registered team member
+    function isAuthorizedUser() {
+      return isSignedIn() 
+             && request.auth.token.email != null 
+             && (
+               request.auth.token.email.lower() == 'miggsous@gmail.com' ||
+               exists(/databases/$(database)/documents/team_members/$(request.auth.token.email.lower()))
+             );
+    }
+
+    // Get the team member's role (safely defaults to none if not exists, but bypasses for Owner)
+    function getUserRole() {
+      return (request.auth.token.email != null && request.auth.token.email.lower() == 'miggsous@gmail.com')
+        ? 'Administrador' 
+        : (request.auth.token.email != null && exists(/databases/$(database)/documents/team_members/$(request.auth.token.email.lower()))
+           ? get(/databases/$(database)/documents/team_members/$(request.auth.token.email.lower())).data.role
+           : 'none');
+    }
+
+    function canModifyData() {
+      return isAuthorizedUser() && (getUserRole() == 'Administrador' || getUserRole() == 'Editor');
+    }
+
+    // Checking if user has team-level power (Owner / Administrador)
+    function canManageTeam() {
+      return isAuthorizedUser() && getUserRole() == 'Administrador';
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- PRODUCT VALIDATION SYSTEM ---
+    function isValidProduct(p) {
+      return p.keys().hasAll(['id', 'name', 'category', 'quantity', 'minQuantity', 'price', 'updatedAt', 'updatedBy', 'updatedByEmail'])
+             && p.keys().size() <= 14
+             && p.id is string && p.id.size() <= 128 && p.id.matches('^[a-zA-Z0-9_-]+$')
+             && p.name is string && p.name.size() > 0 && p.name.size() <= 200
+             && p.category is string && p.category.size() > 0 && p.category.size() <= 100
+             && (p.quantity is int || p.quantity is float) && p.quantity >= 0
+             && (p.minQuantity is int || p.minQuantity is float) && p.minQuantity >= 0
+             && (p.price is int || p.price is float) && p.price >= 0.0
+             && p.updatedAt is timestamp
+             && p.updatedBy is string && p.updatedBy.size() <= 150
+             && p.updatedByEmail is string && p.updatedByEmail.size() <= 150
+             && (!p.keys().hasAny(['resalePrice']) || ((p.resalePrice is int || p.resalePrice is float) && p.resalePrice >= 0))
+             && (!p.keys().hasAny(['location']) || (p.location is string && p.location.size() <= 100))
+             && (!p.keys().hasAny(['description']) || (p.description is string && p.description.size() <= 1000))
+             && (!p.keys().hasAny(['imageUrl']) || (p.imageUrl is string && p.imageUrl.size() <= 1000000))
+             && (!p.keys().hasAny(['barcode']) || (p.barcode is string && p.barcode.size() <= 100));
+    }
+
+    // --- TRANSACTION VALIDATION SYSTEM (Audit Log Blueprint) ---
+    function isValidTransaction(t) {
+      return t.keys().hasAll(['id', 'productId', 'productName', 'type', 'quantityChanged', 'previousQuantity', 'newQuantity', 'timestamp', 'userId', 'userEmail', 'userDisplayName'])
+             && t.keys().size() <= 13
+             && t.id is string && t.id.size() <= 128
+             && t.productId is string && t.productId.size() <= 128 && t.productId.matches('^[a-zA-Z0-9_-]+$')
+             && t.productName is string && t.productName.size() > 0 && t.productName.size() <= 200
+             && t.type is string && (t.type == 'IN' || t.type == 'OUT' || t.type == 'ADJUST')
+             && (t.quantityChanged is int || t.quantityChanged is float)
+             && (t.previousQuantity is int || t.previousQuantity is float) && t.previousQuantity >= 0
+             && (t.newQuantity is int || t.newQuantity is float) && t.newQuantity >= 0
+             && t.timestamp is timestamp
+             && t.userId is string && t.userId == request.auth.uid
+             && t.userEmail is string && t.userEmail.lower() == request.auth.token.email.lower()
+             && t.userDisplayName is string && t.userDisplayName.size() <= 150
+             && (!t.keys().hasAny(['reason']) || (t.reason is string && t.reason.size() <= 500));
+    }
+
+    // --- TEAM MEMBER VALIDATION SYSTEM ---
+    function isValidTeamMember(m) {
+      return m.keys().hasAll(['id', 'email', 'role', 'status', 'invitedBy', 'invitedByEmail', 'invitedAt'])
+             && m.keys().size() <= 9
+             && m.id is string && m.id.size() <= 128
+             && m.email is string && m.email.size() <= 200
+             && m.role is string && (m.role == 'Administrador' || m.role == 'Editor' || m.role == 'Visualizador')
+             && m.status is string && (m.status == 'Pendente' || m.status == 'Ativo')
+             && m.invitedBy is string && m.invitedBy.size() <= 150
+             && m.invitedByEmail is string && m.invitedByEmail.size() <= 150
+             && m.invitedAt is timestamp
+             && (!m.keys().hasAny(['name']) || (m.name is string && m.name.size() <= 150))
+             && (!m.keys().hasAny(['avatarUrl']) || (m.avatarUrl is string && m.avatarUrl.size() <= 15000));
+    }
+
+    // --- COLLECTION PATH MATCHERS ---
+
+    // 1. Products Collection
+    match /products/{productId} {
+      // Direct GET and list are allowed for authorized team members
+      allow get, list: if isAuthorizedUser();
+      
+      // Create a new product
+      allow create: if canModifyData() 
+                    && isValidId(productId) 
+                    && productId == incoming().id
+                    && isValidProduct(incoming())
+                    && incoming().updatedAt == request.time
+                    && incoming().updatedByEmail.lower() == request.auth.token.email.lower();
+
+      // Update a product (using action limits if desired, but here we enforce full checks and actor alignment)
+      allow update: if canModifyData()
+                    && isValidId(productId)
+                    && productId == incoming().id
+                    && isValidProduct(incoming())
+                    && incoming().updatedAt == request.time
+                    && incoming().updatedByEmail.lower() == request.auth.token.email.lower()
+                    && incoming().id == existing().id; // ID cannot be updated
+
+      // Delete a product (Only admins/owner can delete)
+      allow delete: if canManageTeam();
+    }
+
+    // 2. Transactions Collection (Write-once immutable logs)
+    match /transactions/{transactionId} {
+      allow get, list: if isAuthorizedUser();
+
+      // Append-only creation
+      allow create: if canModifyData()
+                    && isValidId(transactionId)
+                    && transactionId == incoming().id
+                    && isValidTransaction(incoming())
+                    && incoming().timestamp == request.time;
+
+      // Allow deletion of audit logs by administrators (e.g. for clearing history), updates remain forbidden.
+      allow delete: if canManageTeam();
+      allow update: if false;
+    }
+
+    // 3. Team Members Collection
+    match /team_members/{memberId} {
+      allow get: if isSignedIn() && (request.auth.token.email.lower() == memberId.lower() || isAuthorizedUser());
+      allow list: if isAuthorizedUser();
+      
+      // Admins can invite/register new IDs, or the user themselves can self-register their own email
+      allow create: if (canManageTeam() || (isSignedIn() && request.auth.token.email.lower() == memberId.lower()))
+                    && isValidEmailId(memberId)
+                    && memberId == incoming().id
+                    && isValidTeamMember(incoming())
+                    && incoming().invitedAt == request.time;
+
+      // Admins can update roles, or the user themselves can update their own activation status upon initial sign in
+      allow update: if (canManageTeam() || (isSignedIn() && request.auth.token.email.lower() == memberId.lower()))
+                    && isValidEmailId(memberId)
+                    && memberId == incoming().id
+                    && isValidTeamMember(incoming())
+                    && incoming().invitedAt == existing().invitedAt; // Keep original invitedAt
+
+      // Admins/owners can delete members
+      allow delete: if canManageTeam();
+    }
+
+    // 4. Access Codes Collection
+    match /access_codes/{codeId} {
+      allow get: if isSignedIn();
+      allow list, write: if isSignedIn() 
+                         && request.auth.token.email != null 
+                         && (
+                           request.auth.token.email.lower() == 'miggsous@gmail.com' ||
+                           (exists(/databases/$(database)/documents/team_members/$(request.auth.token.email.lower())) &&
+                            get(/databases/$(database)/documents/team_members/$(request.auth.token.email.lower())).data.role == 'Administrador')
+                         );
+    }
+  }
+}
